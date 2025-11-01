@@ -5,13 +5,15 @@ A complete **AI Voice Agent** with real-time speech recognition, LLM processing,
 ## 🎯 What It Does
 
 ```
-You speak → Deepgram STT → Groq LLM → AI responds (streaming)
+You speak 🎤 → Deepgram STT 📝 → Groq LLM 🤖 → Deepgram TTS 🔊 → AI speaks!
 ```
 
 1. **🎤 You speak** into your microphone
-2. **🔄 Deepgram** transcribes your speech in real-time
+2. **📝 Deepgram STT** transcribes your speech in real-time
 3. **🤖 Groq LLM** generates intelligent response
-4. **💬 Response streams** back to you character-by-character
+4. **💬 Text streams** back character-by-character
+5. **🔊 Deepgram TTS** converts response to speech
+6. **👂 AI speaks** the response out loud!
 
 ## Architecture
 
@@ -22,14 +24,15 @@ Both run **independently** on separate ports with clean separation of concerns.
 
 ## Features
 
-### Backend (FastAPI + Deepgram + Groq)
-- ✅ **WebSocket Audio Streaming**: Real-time audio streaming via WebSocket
+### Backend (FastAPI + Deepgram STT/TTS + Groq)
+- ✅ **WebSocket Audio Streaming**: Real-time bidirectional audio
 - ✅ **Deepgram STT**: Real-time speech-to-text transcription
 - ✅ **Groq LLM Integration**: Fast, intelligent AI responses
-- ✅ **Streaming LLM Responses**: Real-time character-by-character streaming
+- ✅ **Deepgram TTS (Aura)**: Natural text-to-speech (AI speaks!)
+- ✅ **Streaming Responses**: Real-time text and audio streaming
 - ✅ **Conversation Memory**: Maintains context across interactions
 - ✅ **Connection Management**: Handles multiple concurrent connections
-- ✅ **Audio Chunk Processing**: Receives and processes audio in chunks
+- ✅ **Audio Processing**: Receives speech, sends speech back
 - ✅ **CORS Support**: Configured for cross-origin requests
 - ✅ **Health Check**: `/health` endpoint for monitoring
 - ✅ **Comprehensive Logging**: Detailed debugging information
@@ -39,6 +42,8 @@ Both run **independently** on separate ports with clean separation of concerns.
 - ✅ **Modern UI**: Beautiful, responsive design with gradient cards
 - ✅ **Live Speech Display**: See your words as you speak (interim)
 - ✅ **Streaming AI Responses**: Watch AI response type out character-by-character
+- ✅ **Audio Playback**: Hear AI speak responses (Web Audio API)
+- ✅ **Voice Visualization**: Shows when AI is speaking
 - ✅ **Conversation View**: Clear user vs AI message display
 - ✅ **Real-time Stats**: Shows chunks, bytes, duration
 - ✅ **Connection Management**: Easy connect/disconnect
@@ -180,10 +185,12 @@ python3 -m http.server 3000
 2. Open **http://localhost:3000/index.html** in your browser
 3. Click **"Connect"** to establish WebSocket connection
 4. Click **"Start Recording"** to begin streaming audio
-5. **Speak into your microphone** 🎤
+5. **Speak into your microphone** 🎤 (e.g., "What is Python?")
 6. Watch **real-time transcriptions** appear in the transcript box!
-7. Monitor stats (chunks, bytes, duration)
-8. Click **"Stop Recording"** when done
+7. See AI's **text response** stream in character-by-character
+8. **Hear AI speak** the response out loud! 🔊👂
+9. Have a natural voice conversation!
+10. Click **"Stop Recording"** when done
 
 ### 📝 Where to See Transcripts
 

@@ -287,6 +287,12 @@
             </button>
         </div>
         
+        <div class="button-group">
+            <button id="testAudioBtn" class="btn-connect" style="font-size: 14px;">
+                🔊 Test Audio Playback
+            </button>
+        </div>
+        
         <div id="transcriptBox" style="background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%); border-left: 4px solid #667eea; border-radius: 8px; padding: 20px; margin-bottom: 20px; min-height: 100px; display: none;">
             <h3 style="margin: 0 0 15px 0; color: #333; font-size: 16px;">🎤 You're saying...</h3>
             <div id="transcriptContent" style="color: #666; font-size: 16px; line-height: 1.6; font-style: italic;">
@@ -295,7 +301,10 @@
         </div>
         
         <div id="llmResponseBox" style="background: linear-gradient(135deg, #4CAF5015 0%, #8BC34A15 100%); border-left: 4px solid #4CAF50; border-radius: 8px; padding: 20px; margin-bottom: 20px; min-height: 100px; display: none;">
-            <h3 style="margin: 0 0 15px 0; color: #333; font-size: 16px;">🤖 AI Response</h3>
+            <h3 style="margin: 0 0 15px 0; color: #333; font-size: 16px;">
+                🤖 AI Response
+                <span id="audioStatus" style="margin-left: 10px; font-size: 14px; color: #666;"></span>
+            </h3>
             <div id="llmResponseContent" style="color: #333; font-size: 18px; line-height: 1.6; font-weight: 500;">
                 Thinking...
             </div>
@@ -330,6 +339,88 @@
         const transcriptContent = document.getElementById('transcriptContent');
         const llmResponseBox = document.getElementById('llmResponseBox');
         const llmResponseContent = document.getElementById('llmResponseContent');
+        const audioStatus = document.getElementById('audioStatus');
+        const testAudioBtn = document.getElementById('testAudioBtn');
+        
+        // Audio playback setup
+        let audioContext = null;
+        let audioQueue = [];
+        let isPlayingAudio = false;
+        let nextPlayTime = 0;
+        let allAudioChunks = [];  // Store all chunks for a complete audio
+        
+        // Initialize Web Audio API
+        function initAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                nextPlayTime = audioContext.currentTime;
+            }
+        }
+        
+        // Play audio chunk
+        async function playAudioChunk(base64Audio) {
+            try {
+                console.log('🔊 Attempting to play audio chunk, length:', base64Audio.length);
+                
+                initAudioContext();
+                
+                // Resume audio context if suspended (browser security)
+                if (audioContext.state === 'suspended') {
+                    console.log('🔓 Resuming audio context...');
+                    await audioContext.resume();
+                }
+                
+                // Decode base64 to binary
+                const binaryString = atob(base64Audio);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                
+                console.log('📦 Decoded audio bytes:', bytes.length);
+                
+                // Convert PCM linear16 to Float32Array for Web Audio API
+                const pcmData = new Int16Array(bytes.buffer);
+                const floatData = new Float32Array(pcmData.length);
+                
+                // Convert 16-bit PCM to float [-1.0, 1.0]
+                for (let i = 0; i < pcmData.length; i++) {
+                    floatData[i] = pcmData[i] / 32768.0;
+                }
+                
+                console.log('🎵 PCM samples:', floatData.length, 'Duration:', floatData.length / 24000, 'seconds');
+                
+                // Create audio buffer (mono, 24kHz - matches backend)
+                const audioBuffer = audioContext.createBuffer(1, floatData.length, 24000);
+                audioBuffer.getChannelData(0).set(floatData);
+                
+                // Create buffer source
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                
+                // Add gain node for volume control
+                const gainNode = audioContext.createGain();
+                gainNode.gain.value = 1.0;  // Full volume
+                
+                source.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                // Schedule playback for smooth streaming
+                if (nextPlayTime < audioContext.currentTime) {
+                    nextPlayTime = audioContext.currentTime;
+                }
+                
+                console.log('▶️ Playing audio at time:', nextPlayTime);
+                source.start(nextPlayTime);
+                nextPlayTime += audioBuffer.duration;
+                
+                console.log('✅ Audio scheduled successfully, next play time:', nextPlayTime);
+                
+            } catch (error) {
+                console.error('❌ Error playing audio:', error);
+                addMessage(`❌ Audio playback error: ${error.message}`, 'error');
+            }
+        }
         
         // Add message to log
         function addMessage(message, type = 'info') {
@@ -435,6 +526,48 @@
                         const fullResponse = llmResponseContent.textContent;
                         addMessage(`🤖 AI: ${fullResponse}`, 'success');
                     }
+                    // Handle TTS_START (text-to-speech starting)
+                    else if (message === 'TTS_START') {
+                        audioStatus.textContent = '🔊 Speaking...';
+                        audioStatus.style.color = '#4CAF50';
+                        initAudioContext();
+                        
+                        // Clear previous audio chunks
+                        allAudioChunks = [];
+                        
+                        // Resume audio context on user interaction (browser security requirement)
+                        if (audioContext && audioContext.state === 'suspended') {
+                            audioContext.resume().then(() => {
+                                console.log('✅ Audio context resumed');
+                                addMessage('🔊 AI is speaking...', 'info');
+                            });
+                        } else {
+                            addMessage('🔊 AI is speaking...', 'info');
+                        }
+                        
+                        console.log('🎤 TTS started, audio context state:', audioContext?.state);
+                    }
+                    // Handle TTS_AUDIO (audio chunks)
+                    else if (message.startsWith('TTS_AUDIO: ')) {
+                        const audioData = message.replace('TTS_AUDIO: ', '');
+                        console.log('📥 Received TTS audio chunk, size:', audioData.length);
+                        
+                        // Store chunk
+                        allAudioChunks.push(audioData);
+                        
+                        // Play chunk immediately
+                        playAudioChunk(audioData);
+                    }
+                    // Handle TTS_DONE (speech complete)
+                    else if (message === 'TTS_DONE') {
+                        console.log('✅ TTS_DONE received, total chunks:', allAudioChunks.length);
+                        audioStatus.textContent = '✅ Done';
+                        audioStatus.style.color = '#666';
+                        setTimeout(() => {
+                            audioStatus.textContent = '';
+                        }, 2000);
+                        addMessage(`✅ AI finished speaking (${allAudioChunks.length} chunks)`, 'success');
+                    }
                     // Regular server messages
                     else {
                         addMessage(`📥 Server: ${message}`, 'success');
@@ -532,6 +665,12 @@
                     transcriptContent.textContent = 'Waiting for speech...';
                     llmResponseBox.style.display = 'none';
                     llmResponseContent.textContent = '🤔 Thinking...';
+                    audioStatus.textContent = '';
+                    
+                    // Reset audio playback
+                    if (audioContext) {
+                        nextPlayTime = audioContext.currentTime;
+                    }
                     
                     startBtn.disabled = true;
                     stopBtn.disabled = false;
@@ -589,10 +728,54 @@
         }
         
         // Event listeners
+        // Test audio playback function
+        function testAudio() {
+            try {
+                initAudioContext();
+                
+                // Resume if needed
+                if (audioContext.state === 'suspended') {
+                    audioContext.resume();
+                }
+                
+                console.log('🔊 Testing audio - generating beep...');
+                addMessage('🔊 Testing audio playback...', 'info');
+                
+                // Generate a simple test beep
+                const duration = 0.5;
+                const frequency = 440; // A4 note
+                const sampleRate = audioContext.sampleRate;
+                const numSamples = duration * sampleRate;
+                
+                const buffer = audioContext.createBuffer(1, numSamples, sampleRate);
+                const channelData = buffer.getChannelData(0);
+                
+                // Generate sine wave
+                for (let i = 0; i < numSamples; i++) {
+                    channelData[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.3;
+                }
+                
+                // Play it
+                const source = audioContext.createBufferSource();
+                source.buffer = buffer;
+                source.connect(audioContext.destination);
+                source.start(audioContext.currentTime);
+                
+                console.log('✅ Test beep played! If you heard it, audio is working.');
+                addMessage('✅ Test beep played! Did you hear it?', 'success');
+                
+            } catch (error) {
+                console.error('❌ Audio test failed:', error);
+                addMessage(`❌ Audio test failed: ${error.message}`, 'error');
+            }
+        }
+        
+        // Event listeners
         connectBtn.addEventListener('click', connectWebSocket);
         disconnectBtn.addEventListener('click', disconnectWebSocket);
         startBtn.addEventListener('click', startRecording);
         stopBtn.addEventListener('click', stopRecording);
+        testAudioBtn.addEventListener('click', testAudio);
         
         // Clean up on page unload
         window.addEventListener('beforeunload', () => {

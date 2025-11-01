@@ -11,8 +11,11 @@ from deepgram import (
     DeepgramClientOptions,
     LiveTranscriptionEvents,
     LiveOptions,
+    SpeakOptions,
 )
 from groq import Groq
+import base64
+import httpx
 
 # Load environment variables
 load_dotenv()
@@ -113,9 +116,66 @@ async def websocket_audio_endpoint(websocket: WebSocket):
     # Get event loop for thread-safe operations
     loop = asyncio.get_event_loop()
     
-    # Helper function to process transcript with Groq LLM
+    # Helper function to convert text to speech using Deepgram TTS
+    async def text_to_speech(text: str):
+        """Convert text to speech using Deepgram Aura TTS"""
+        try:
+            if not deepgram_api_key:
+                logger.warning("Deepgram API key not available for TTS")
+                return
+            
+            logger.info("=" * 60)
+            logger.info(f"🔊 CONVERTING TO SPEECH:")
+            logger.info(f"   Text: '{text[:100]}...'")
+            logger.info("=" * 60)
+            
+            # Signal that TTS is starting
+            await manager.send_message("TTS_START", websocket)
+            
+            # Use Deepgram TTS API via HTTP
+            url = "https://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=linear16&sample_rate=24000"
+            headers = {
+                "Authorization": f"Token {deepgram_api_key}",
+                "Content-Type": "application/json"
+            }
+            payload = {"text": text}
+            
+            # Make async HTTP request
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, headers=headers, timeout=30.0)
+                
+                if response.status_code != 200:
+                    logger.error(f"Deepgram TTS error: {response.status_code} - {response.text}")
+                    await manager.send_message(f"❌ TTS API error: {response.status_code}", websocket)
+                    return
+                
+                # Get the audio data
+                audio_data = response.content
+                
+                logger.info(f"🔊 Received {len(audio_data)} bytes of audio from Deepgram TTS")
+                
+                # Split into chunks and send to client
+                chunk_size = 8192  # 8KB chunks
+                total_chunks = (len(audio_data) + chunk_size - 1) // chunk_size
+                
+                for i in range(0, len(audio_data), chunk_size):
+                    chunk = audio_data[i:i + chunk_size]
+                    # Encode audio chunk as base64 for WebSocket transmission
+                    audio_b64 = base64.b64encode(chunk).decode('utf-8')
+                    await manager.send_message(f"TTS_AUDIO: {audio_b64}", websocket)
+                
+                logger.info(f"🔊 TTS complete: Sent {total_chunks} audio chunks ({len(audio_data)} bytes)")
+            
+            # Signal that TTS is complete
+            await manager.send_message("TTS_DONE", websocket)
+            
+        except Exception as e:
+            logger.error(f"❌ Error in TTS: {e}", exc_info=True)
+            await manager.send_message(f"❌ TTS error: {str(e)}", websocket)
+    
+    # Helper function to process transcript with Groq LLM with streaming TTS
     async def process_with_llm(transcript: str):
-        """Send transcript to Groq LLM and stream response back"""
+        """Send transcript to Groq LLM and stream response with TTS"""
         try:
             if not groq_client:
                 logger.warning("Groq client not initialized")
@@ -134,22 +194,46 @@ async def websocket_audio_endpoint(websocket: WebSocket):
             
             # Send to Groq and stream response
             stream = groq_client.chat.completions.create(
-                model="openai/gpt-oss-20b",  # Fast, high-quality OSS model
+                model="openai/gpt-oss-120b",  # Fast, high-quality OSS model
                 messages=conversation_history,
                 temperature=0.7,
                 max_tokens=1024,
                 stream=True,
             )
             
-            # Stream response back to client
+            # Stream response and convert to speech sentence by sentence
             full_response = ""
+            current_sentence = ""
+            sentence_count = 0
+            
             for chunk in stream:
                 if chunk.choices[0].delta.content:
                     content = chunk.choices[0].delta.content
                     full_response += content
+                    current_sentence += content
                     
-                    # Send each chunk to frontend
+                    # Send each chunk to frontend for text display
                     await manager.send_message(f"LLM_RESPONSE: {content}", websocket)
+                    
+                    # Check if we have a complete sentence (ends with . ! ? or newline)
+                    if any(punct in content for punct in ['. ', '! ', '? ', '.\n', '!\n', '?\n']):
+                        # Found sentence end - convert to speech immediately!
+                        sentence_to_speak = current_sentence.strip()
+                        
+                        if sentence_to_speak:
+                            sentence_count += 1
+                            logger.info(f"🔊 Sentence #{sentence_count} complete: '{sentence_to_speak[:50]}...'")
+                            
+                            # Convert this sentence to speech immediately (streaming!)
+                            await text_to_speech(sentence_to_speak)
+                            
+                            # Reset for next sentence
+                            current_sentence = ""
+            
+            # Handle any remaining text (last sentence might not end with punctuation)
+            if current_sentence.strip():
+                logger.info(f"🔊 Final sentence: '{current_sentence.strip()[:50]}...'")
+                await text_to_speech(current_sentence.strip())
             
             # Add assistant response to history
             conversation_history.append({
@@ -160,9 +244,10 @@ async def websocket_audio_endpoint(websocket: WebSocket):
             logger.info("=" * 60)
             logger.info(f"🤖 LLM RESPONSE COMPLETE:")
             logger.info(f"   Assistant: '{full_response}'")
+            logger.info(f"   Sentences spoken: {sentence_count}")
             logger.info("=" * 60)
             
-            # Signal end of response
+            # Signal end of text response
             await manager.send_message("LLM_DONE", websocket)
             
         except Exception as e:
