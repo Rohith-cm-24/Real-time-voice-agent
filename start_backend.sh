@@ -18,6 +18,10 @@ fi
 echo "🔧 Activating virtual environment..."
 source venv/bin/activate
 
+# Upgrade pip and install setuptools (for Python 3.12+ compatibility)
+echo "📦 Upgrading pip and setuptools..."
+pip install --upgrade pip setuptools wheel -q
+
 # Install/update dependencies
 echo "📥 Installing dependencies..."
 pip install -q -r requirements.txt

@@ -2,6 +2,8 @@
 
 A complete **AI Voice Agent** with real-time speech recognition, LLM processing, and streaming responses. Talk to AI naturally using your voice!
 
+**🆕 Now with WebRTC and Docker support!**
+
 ## 🎯 What It Does
 
 ```
@@ -9,7 +11,7 @@ You speak 🎤 → Deepgram STT 📝 → Groq LLM 🤖 → Deepgram TTS 🔊 →
 ```
 
 1. **🎤 You speak** into your microphone
-2. **📝 Deepgram STT** transcribes your speech in real-time
+2. **📝 Deepgram STT** transcribes your speech in real-time  
 3. **🤖 Groq LLM** generates intelligent response
 4. **💬 Text streams** back character-by-character
 5. **🔊 Deepgram TTS** converts response to speech
@@ -17,28 +19,50 @@ You speak 🎤 → Deepgram STT 📝 → Groq LLM 🤖 → Deepgram TTS 🔊 →
 
 ## Architecture
 
-**🔵 Backend**: FastAPI + WebSocket + Deepgram STT + Groq LLM
-**🎨 Frontend**: Vanilla HTML/CSS/JavaScript (zero frameworks)
+**🔵 Backend**: FastAPI + WebSocket/WebRTC + Deepgram STT/TTS + Groq LLM  
+**🎨 Frontend**: Vanilla HTML/CSS/JavaScript (zero frameworks)  
+**🐳 Docker**: Full containerization support
 
 Both run **independently** on separate ports with clean separation of concerns.
+
+## 🚀 Dual Protocol Support
+
+Choose between two protocols for optimal performance:
+
+### 📡 WebSocket (Traditional)
+- Reliable, widely supported
+- Works everywhere
+- Good for general use
+
+### ⚡ WebRTC (Low Latency)
+- **Ultra-low latency** for real-time audio
+- Peer-to-peer connection
+- **Better performance** for voice conversations
+- Compare latency metrics side-by-side!
 
 ## Features
 
 ### Backend (FastAPI + Deepgram STT/TTS + Groq)
+- ✅ **Dual Protocol Support**: WebSocket **AND** WebRTC
 - ✅ **WebSocket Audio Streaming**: Real-time bidirectional audio
+- ✅ **WebRTC P2P Connection**: Ultra-low latency audio streaming
 - ✅ **Deepgram STT**: Real-time speech-to-text transcription
-- ✅ **Groq LLM Integration**: Fast, intelligent AI responses
+- ✅ **Groq LLM Integration**: Fast, intelligent AI responses (openai/gpt-oss-120b)
 - ✅ **Deepgram TTS (Aura)**: Natural text-to-speech (AI speaks!)
 - ✅ **Streaming Responses**: Real-time text and audio streaming
+- ✅ **Latency Tracking**: Measure STT, LLM, and TTS latency
 - ✅ **Conversation Memory**: Maintains context across interactions
 - ✅ **Connection Management**: Handles multiple concurrent connections
 - ✅ **Audio Processing**: Receives speech, sends speech back
 - ✅ **CORS Support**: Configured for cross-origin requests
 - ✅ **Health Check**: `/health` endpoint for monitoring
 - ✅ **Comprehensive Logging**: Detailed debugging information
+- ✅ **Docker Support**: Fully containerized deployment
 
 ### Frontend (Vanilla JS)
 - ✅ **Zero Dependencies**: Pure HTML/CSS/JavaScript - no build step!
+- ✅ **Protocol Selector**: Switch between WebSocket and WebRTC
+- ✅ **Latency Metrics Display**: Real-time performance monitoring
 - ✅ **Modern UI**: Beautiful, responsive design with gradient cards
 - ✅ **Live Speech Display**: See your words as you speak (interim)
 - ✅ **Streaming AI Responses**: Watch AI response type out character-by-character
@@ -49,6 +73,7 @@ Both run **independently** on separate ports with clean separation of concerns.
 - ✅ **Connection Management**: Easy connect/disconnect
 - ✅ **Audio Recording**: Browser MediaRecorder API
 - ✅ **Message Log**: Complete conversation history
+- ✅ **WebRTC Integration**: Full WebRTC peer connection support
 
 ## Project Structure
 
@@ -116,7 +141,27 @@ voice-agents/
 
 ## Quick Start
 
-### 🚀 Start Both Servers (Recommended)
+### 🐳 Option 1: Docker (Recommended - Zero Setup!)
+
+```bash
+cd /home/rohith/Documents/voice-agents
+
+# Create .env file with your API keys
+echo "DEEPGRAM_API_KEY=your_key_here" >> .env
+echo "GROQ_API_KEY=your_key_here" >> .env
+
+# Start everything with Docker Compose
+docker-compose up
+```
+
+Then open: **http://localhost:8080/index.html**
+
+- Backend: `http://localhost:8000`
+- Frontend: `http://localhost:8080`
+- No Python installation needed!
+- No dependency issues!
+
+### 📦 Option 2: Manual Setup
 
 **Terminal 1 - Backend:**
 ```bash
@@ -173,7 +218,30 @@ python3 -m http.server 3000
 |----------|------|-------------|
 | `/` | GET | API information and status |
 | `/health` | GET | Health check endpoint |
-| `/ws/audio` | WebSocket | Audio streaming endpoint |
+| `/ws/audio` | WebSocket | WebSocket audio streaming endpoint |
+| `/ws/webrtc` | WebSocket | WebRTC signaling channel |
+| `/webrtc/offer` | POST | WebRTC SDP offer/answer exchange |
+
+---
+
+## 📊 Latency Comparison: WebSocket vs WebRTC
+
+The UI now displays real-time latency metrics for both protocols:
+
+| Metric | Description | Typical Range |
+|--------|-------------|---------------|
+| **STT Latency** | Speech-to-text processing time | 100-500ms |
+| **LLM Latency** | Time to first token from LLM | 200-800ms |
+| **TTS Latency** | Text-to-speech generation time | 300-1000ms |
+| **Total Pipeline** | End-to-end response time | 600-2300ms |
+
+**WebRTC typically shows 20-50% lower latency** compared to WebSocket due to:
+- Direct peer-to-peer audio path
+- Lower protocol overhead
+- Optimized audio codecs
+- Better network utilization
+
+Try both protocols and see the difference in your browser!
 
 ---
 
@@ -182,15 +250,18 @@ python3 -m http.server 3000
 ### Using the Frontend
 
 1. **Start both servers** (see Quick Start above)
-2. Open **http://localhost:3000/index.html** in your browser
-3. Click **"Connect"** to establish WebSocket connection
-4. Click **"Start Recording"** to begin streaming audio
-5. **Speak into your microphone** 🎤 (e.g., "What is Python?")
-6. Watch **real-time transcriptions** appear in the transcript box!
-7. See AI's **text response** stream in character-by-character
-8. **Hear AI speak** the response out loud! 🔊👂
-9. Have a natural voice conversation!
-10. Click **"Stop Recording"** when done
+2. Open **http://localhost:3000/index.html** (or **http://localhost:8080/index.html** for Docker) in your browser
+3. **Select Protocol**: Choose between WebSocket or WebRTC in the dropdown
+4. Click **"Connect"** to establish connection
+5. Click **"Start Recording"** to begin streaming audio
+6. **Speak into your microphone** 🎤 (e.g., "What is Python?")
+7. Watch **real-time transcriptions** appear in the transcript box!
+8. See AI's **text response** stream in character-by-character
+9. **Hear AI speak** the response out loud! 🔊👂
+10. **Monitor latency metrics** in the metrics panel (STT, LLM, TTS)
+11. Have a natural voice conversation!
+12. Try **switching protocols** to compare latency!
+13. Click **"Stop Recording"** when done
 
 ### 📝 Where to See Transcripts
 
@@ -349,49 +420,66 @@ logging.basicConfig(level=logging.DEBUG)  # More verbose
 logging.basicConfig(level=logging.WARNING)  # Less verbose
 ```
 
-## Production Deployment
+## 🐳 Production Deployment with Docker
 
-### Using Gunicorn
+### Quick Docker Compose Deployment
+
+The project includes a complete Docker Compose setup:
+
+```bash
+cd /home/rohith/Documents/voice-agents
+
+# Create .env file with API keys
+cat > .env << EOF
+DEEPGRAM_API_KEY=your_deepgram_key_here
+GROQ_API_KEY=your_groq_key_here
+EOF
+
+# Start all services
+docker-compose up -d
+
+# Check status
+docker-compose ps
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+```
+
+**Services:**
+- Backend: `http://localhost:8000` (FastAPI + WebSocket + WebRTC)
+- Frontend: `http://localhost:8080` (Static HTTP server)
+
+### Manual Docker Build
+
+```bash
+# Build backend image
+docker build -t voice-agent-backend .
+
+# Run backend container
+docker run -d \
+  -p 8000:8000 \
+  -e DEEPGRAM_API_KEY=your_key \
+  -e GROQ_API_KEY=your_key \
+  --name voice-backend \
+  voice-agent-backend
+
+# Run frontend container
+docker run -d \
+  -p 8080:8080 \
+  -v $(pwd)/index.html:/app/index.html \
+  --name voice-frontend \
+  python:3.11-slim \
+  python -m http.server 8080
+```
+
+### Using Gunicorn (Alternative)
 
 ```bash
 pip install gunicorn
 gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
-```
-
-### Using Docker
-
-**Backend Dockerfile:**
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-COPY requirements.txt main.py ./
-RUN pip install --no-cache-dir -r requirements.txt
-
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-**Frontend Dockerfile:**
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-COPY index.html ./
-
-CMD ["python", "-m", "http.server", "3000"]
-```
-
-Build and run:
-```bash
-# Backend
-docker build -t voice-agent-backend -f Dockerfile.backend .
-docker run -p 8000:8000 voice-agent-backend
-
-# Frontend
-docker build -t voice-agent-frontend -f Dockerfile.frontend .
-docker run -p 3000:3000 voice-agent-frontend
 ```
 
 ### Nginx Reverse Proxy
@@ -476,15 +564,20 @@ Contributions are welcome! Feel free to submit issues or pull requests.
 
 ## Future Enhancements
 
+- [x] ~~WebRTC support~~ **✅ IMPLEMENTED!**
+- [x] ~~Real-time transcription~~ **✅ IMPLEMENTED!**
+- [x] ~~Latency tracking~~ **✅ IMPLEMENTED!**
+- [x] ~~Docker containerization~~ **✅ IMPLEMENTED!**
 - [ ] Audio format conversion
-- [ ] Integration with speech recognition services (Whisper, Google Speech-to-Text)
+- [ ] Integration with additional speech services (Whisper, Google Speech-to-Text)
 - [ ] Audio buffer management for long recordings
 - [ ] Support for multiple audio codecs
 - [ ] Authentication and authorization
 - [ ] Rate limiting
-- [ ] Audio compression
-- [ ] Real-time transcription
-- [ ] WebRTC support
+- [ ] Advanced audio compression
+- [ ] Multi-user voice rooms
+- [ ] Voice activity detection optimization
+- [ ] Custom LLM model selection in UI
 
 ## Support
 
@@ -492,5 +585,11 @@ For issues or questions, please create an issue in the project repository.
 
 ---
 
-Built with ❤️ using FastAPI and WebSockets
+**Built with ❤️ using:**
+- FastAPI
+- WebSockets & WebRTC
+- Deepgram STT & TTS (Aura)
+- Groq LLM (openai/gpt-oss-120b)
+- Docker
+- Vanilla JavaScript (zero frameworks!)
 

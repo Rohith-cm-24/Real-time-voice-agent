@@ -236,11 +236,24 @@
 <body>
     <div class="container">
         <h1>🎤 Voice Agent Audio Streaming</h1>
-        <p class="subtitle">Real-time microphone audio streaming via WebSocket</p>
+        <p class="subtitle">Real-time microphone audio streaming via WebSocket or WebRTC</p>
         
         <div class="input-group">
+            <label for="protocol">Protocol:</label>
+            <select id="protocol" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
+                <option value="websocket">WebSocket (Traditional)</option>
+                <option value="webrtc">WebRTC (Low Latency)</option>
+            </select>
+        </div>
+        
+        <div class="input-group" id="wsUrlGroup">
             <label for="wsUrl">WebSocket Server URL:</label>
             <input type="text" id="wsUrl" value="ws://localhost:8000/ws/audio" placeholder="ws://localhost:8000/ws/audio">
+        </div>
+        
+        <div class="input-group" id="webrtcUrlGroup" style="display: none;">
+            <label for="webrtcUrl">WebRTC Server URL:</label>
+            <input type="text" id="webrtcUrl" value="http://localhost:8000" placeholder="http://localhost:8000">
         </div>
         
         <div class="button-group">
@@ -260,6 +273,32 @@
             <div class="status-item">
                 <span class="status-label">Recording Status:</span>
                 <span id="recordingStatus" class="status-value">Idle</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Protocol:</span>
+                <span id="activeProtocol" class="status-value">None</span>
+            </div>
+        </div>
+        
+        <div id="latencyCard" style="background: linear-gradient(135deg, #FF980015 0%, #FF572215 100%); border-left: 4px solid #FF9800; border-radius: 8px; padding: 15px; margin-bottom: 20px; display: none;">
+            <h3 style="margin: 0 0 10px 0; color: #333; font-size: 14px;">📊 Latency Metrics</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 13px;">
+                <div>
+                    <span style="color: #666;">STT:</span>
+                    <span id="sttLatency" style="color: #333; font-weight: 600;">--</span>
+                </div>
+                <div>
+                    <span style="color: #666;">LLM:</span>
+                    <span id="llmLatency" style="color: #333; font-weight: 600;">--</span>
+                </div>
+                <div>
+                    <span style="color: #666;">TTS:</span>
+                    <span id="ttsLatency" style="color: #333; font-weight: 600;">--</span>
+                </div>
+                <div>
+                    <span style="color: #666;">Total:</span>
+                    <span id="totalLatency" style="color: #333; font-weight: 600;">--</span>
+                </div>
             </div>
         </div>
         
@@ -323,14 +362,24 @@
         let startTime = null;
         let durationInterval = null;
         
+        // WebRTC variables
+        let peerConnection = null;
+        let webrtcSignalingWs = null;
+        let currentProtocol = 'websocket';
+        
         // DOM elements
+        const protocolSelect = document.getElementById('protocol');
         const wsUrlInput = document.getElementById('wsUrl');
+        const webrtcUrlInput = document.getElementById('webrtcUrl');
+        const wsUrlGroup = document.getElementById('wsUrlGroup');
+        const webrtcUrlGroup = document.getElementById('webrtcUrlGroup');
         const connectBtn = document.getElementById('connectBtn');
         const disconnectBtn = document.getElementById('disconnectBtn');
         const startBtn = document.getElementById('startBtn');
         const stopBtn = document.getElementById('stopBtn');
         const connectionStatus = document.getElementById('connectionStatus');
         const recordingStatus = document.getElementById('recordingStatus');
+        const activeProtocol = document.getElementById('activeProtocol');
         const messagesDiv = document.getElementById('messages');
         const chunksCountEl = document.getElementById('chunksCount');
         const bytesCountEl = document.getElementById('bytesCount');
@@ -341,6 +390,11 @@
         const llmResponseContent = document.getElementById('llmResponseContent');
         const audioStatus = document.getElementById('audioStatus');
         const testAudioBtn = document.getElementById('testAudioBtn');
+        const latencyCard = document.getElementById('latencyCard');
+        const sttLatencyEl = document.getElementById('sttLatency');
+        const llmLatencyEl = document.getElementById('llmLatency');
+        const ttsLatencyEl = document.getElementById('ttsLatency');
+        const totalLatencyEl = document.getElementById('totalLatency');
         
         // Audio playback setup
         let audioContext = null;
@@ -354,6 +408,40 @@
             if (!audioContext) {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 nextPlayTime = audioContext.currentTime;
+            }
+        }
+        
+        // Protocol selector handler
+        protocolSelect.addEventListener('change', (e) => {
+            currentProtocol = e.target.value;
+            if (currentProtocol === 'websocket') {
+                wsUrlGroup.style.display = 'block';
+                webrtcUrlGroup.style.display = 'none';
+            } else {
+                wsUrlGroup.style.display = 'none';
+                webrtcUrlGroup.style.display = 'block';
+            }
+            addMessage(`📡 Protocol switched to: ${currentProtocol.toUpperCase()}`, 'info');
+        });
+        
+        // Update latency metrics display
+        function updateLatencyMetrics(metrics) {
+            latencyCard.style.display = 'block';
+            
+            if (metrics.stt_latency !== undefined) {
+                sttLatencyEl.textContent = `${metrics.stt_latency.toFixed(0)}ms`;
+            }
+            if (metrics.llm_latency !== undefined) {
+                llmLatencyEl.textContent = `${metrics.llm_latency.toFixed(0)}ms`;
+            }
+            if (metrics.tts_latency !== undefined) {
+                ttsLatencyEl.textContent = `${metrics.tts_latency.toFixed(0)}ms`;
+            }
+            
+            // Calculate total
+            const total = (metrics.stt_latency || 0) + (metrics.llm_latency || 0) + (metrics.tts_latency || 0);
+            if (total > 0) {
+                totalLatencyEl.textContent = `${total.toFixed(0)}ms`;
             }
         }
         
@@ -422,6 +510,175 @@
             }
         }
         
+        // WebRTC Connection Functions
+        async function connectWebRTC() {
+            try {
+                const baseUrl = webrtcUrlInput.value.trim();
+                if (!baseUrl) {
+                    addMessage('Please enter a valid server URL', 'error');
+                    return;
+                }
+                
+                addMessage(`📞 Connecting to WebRTC server: ${baseUrl}...`, 'info');
+                
+                // Create WebRTC peer connection
+                peerConnection = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+                
+                // Get microphone access
+                audioStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+                
+                // Add audio track to peer connection
+                audioStream.getTracks().forEach(track => {
+                    peerConnection.addTrack(track, audioStream);
+                    addMessage(`🎤 Audio track added: ${track.kind}`, 'info');
+                });
+                
+                // Handle ICE candidates
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        console.log('ICE candidate:', event.candidate);
+                    }
+                };
+                
+                // Handle connection state changes
+                peerConnection.onconnectionstatechange = () => {
+                    addMessage(`📡 WebRTC state: ${peerConnection.connectionState}`, 'info');
+                    if (peerConnection.connectionState === 'connected') {
+                        updateConnectionStatus('Connected (WebRTC)', true);
+                        activeProtocol.textContent = 'WebRTC';
+                    } else if (peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'closed') {
+                        updateConnectionStatus('Disconnected', false);
+                        activeProtocol.textContent = 'None';
+                    }
+                };
+                
+                // Create offer
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                
+                // Send offer to server
+                const response = await fetch(`${baseUrl}/webrtc/offer`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sdp: peerConnection.localDescription.sdp,
+                        type: peerConnection.localDescription.type
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Server error: ${response.status}`);
+                }
+                
+                const answer = await response.json();
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                
+                // Get session ID from response
+                const sessionId = answer.session_id;
+                if (!sessionId) {
+                    throw new Error('No session ID received from server');
+                }
+                
+                addMessage(`🔑 Session ID: ${sessionId.substring(0, 8)}...`, 'info');
+                
+                // Connect WebSocket for signaling with session ID
+                const wsUrl = baseUrl.replace('http://', 'ws://').replace('https://', 'wss://') + '/ws/webrtc/' + sessionId;
+                webrtcSignalingWs = new WebSocket(wsUrl);
+                
+                webrtcSignalingWs.onopen = () => {
+                    addMessage('✅ WebRTC signaling channel connected', 'success');
+                    
+                    // Auto-start listening for WebRTC (audio flows automatically)
+                    isRecording = true;
+                    startTime = Date.now();
+                    chunksCount = 0;
+                    bytesCount = 0;
+                    
+                    transcriptBox.style.display = 'block';
+                    transcriptContent.textContent = 'Waiting for speech...';
+                    llmResponseBox.style.display = 'none';
+                    updateRecordingStatus('Listening (WebRTC)...', true);
+                    addMessage('🎤 WebRTC audio streaming active - speak now!', 'info');
+                    
+                    // Start duration counter
+                    durationInterval = setInterval(updateStats, 1000);
+                    
+                    // Initialize audio context
+                    initAudioContext();
+                    if (audioContext) {
+                        nextPlayTime = audioContext.currentTime;
+                    }
+                };
+                
+                webrtcSignalingWs.onmessage = handleWebSocketMessage;
+                
+                webrtcSignalingWs.onerror = (error) => {
+                    addMessage('❌ WebRTC signaling error', 'error');
+                    console.error('WebRTC signaling error:', error);
+                };
+                
+                webrtcSignalingWs.onclose = () => {
+                    addMessage('🔌 WebRTC signaling disconnected', 'warning');
+                };
+                
+                updateConnectionStatus('Connected (WebRTC)', true);
+                activeProtocol.textContent = 'WebRTC';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                startBtn.disabled = false;
+                protocolSelect.disabled = true;
+                webrtcUrlInput.disabled = true;
+                
+                addMessage('✅ WebRTC connection established!', 'success');
+                
+            } catch (error) {
+                addMessage(`❌ WebRTC connection failed: ${error.message}`, 'error');
+                console.error('WebRTC error:', error);
+                updateConnectionStatus('Error', false);
+                
+                // Cleanup
+                if (peerConnection) {
+                    peerConnection.close();
+                    peerConnection = null;
+                }
+                if (audioStream) {
+                    audioStream.getTracks().forEach(track => track.stop());
+                    audioStream = null;
+                }
+            }
+        }
+        
+        function disconnectWebRTC() {
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+                addMessage('WebRTC peer connection closed', 'info');
+            }
+            if (webrtcSignalingWs) {
+                webrtcSignalingWs.close();
+                webrtcSignalingWs = null;
+            }
+            if (audioStream) {
+                audioStream.getTracks().forEach(track => track.stop());
+                audioStream = null;
+            }
+            updateConnectionStatus('Disconnected', false);
+            activeProtocol.textContent = 'None';
+            connectBtn.disabled = false;
+            disconnectBtn.disabled = true;
+            startBtn.disabled = true;
+            protocolSelect.disabled = false;
+            webrtcUrlInput.disabled = false;
+        }
+        
         // Add message to log
         function addMessage(message, type = 'info') {
             const messageEl = document.createElement('div');
@@ -462,30 +719,12 @@
             }
         }
         
-        // Connect to WebSocket
-        async function connectWebSocket() {
-            const wsUrl = wsUrlInput.value.trim();
+        // Shared WebSocket message handler
+        function handleWebSocketMessage(event) {
+            const message = event.data;
             
-            if (!wsUrl) {
-                addMessage('Please enter a valid WebSocket URL', 'error');
-                return;
-            }
-            
-            try {
-                addMessage(`Connecting to ${wsUrl}...`, 'info');
-                websocket = new WebSocket(wsUrl);
-                
-                websocket.onopen = () => {
-                    addMessage('✅ WebSocket connected successfully!', 'success');
-                    updateConnectionStatus('Connected', true);
-                    connectBtn.disabled = true;
-                    disconnectBtn.disabled = false;
-                    startBtn.disabled = false;
-                    wsUrlInput.disabled = true;
-                };
-                
-                websocket.onmessage = (event) => {
-                    const message = event.data;
+            // Debug: log all messages
+            console.log('📨 WebSocket message received:', message);
                     
                     // Handle INTERIM transcripts (user is speaking)
                     if (message.startsWith('INTERIM: ')) {
@@ -568,11 +807,60 @@
                         }, 2000);
                         addMessage(`✅ AI finished speaking (${allAudioChunks.length} chunks)`, 'success');
                     }
+                    // Handle LATENCY metrics
+                    else if (message.startsWith('LATENCY: ')) {
+                        const latencyJson = message.replace('LATENCY: ', '');
+                        try {
+                            const metrics = JSON.parse(latencyJson);
+                            updateLatencyMetrics(metrics);
+                            console.log('📊 Latency metrics:', metrics);
+                        } catch (e) {
+                            console.error('Error parsing latency metrics:', e);
+                        }
+                    }
+                    // Handle STATS (WebRTC frame stats)
+                    else if (message.startsWith('STATS: ')) {
+                        const statsJson = message.replace('STATS: ', '');
+                        try {
+                            const stats = JSON.parse(statsJson);
+                            chunksCount = stats.chunks || chunksCount;
+                            bytesCount = stats.bytes || bytesCount;
+                            updateStats();
+                        } catch (e) {
+                            console.error('Error parsing stats:', e);
+                        }
+                    }
                     // Regular server messages
                     else {
                         addMessage(`📥 Server: ${message}`, 'success');
                     }
+        }
+        
+        // Connect to WebSocket
+        async function connectWebSocket() {
+            const wsUrl = wsUrlInput.value.trim();
+            
+            if (!wsUrl) {
+                addMessage('Please enter a valid WebSocket URL', 'error');
+                return;
+            }
+            
+            try {
+                addMessage(`Connecting to ${wsUrl}...`, 'info');
+                websocket = new WebSocket(wsUrl);
+                
+                websocket.onopen = () => {
+                    addMessage('✅ WebSocket connected successfully!', 'success');
+                    updateConnectionStatus('Connected (WebSocket)', true);
+                    activeProtocol.textContent = 'WebSocket';
+                    connectBtn.disabled = true;
+                    disconnectBtn.disabled = false;
+                    startBtn.disabled = false;
+                    protocolSelect.disabled = true;
+                    wsUrlInput.disabled = true;
                 };
+                
+                websocket.onmessage = handleWebSocketMessage;
                 
                 websocket.onerror = (error) => {
                     addMessage(`❌ WebSocket error occurred`, 'error');
@@ -582,10 +870,12 @@
                 websocket.onclose = () => {
                     addMessage('🔌 WebSocket disconnected', 'warning');
                     updateConnectionStatus('Disconnected', false);
+                    activeProtocol.textContent = 'None';
                     connectBtn.disabled = false;
                     disconnectBtn.disabled = true;
                     startBtn.disabled = true;
                     stopBtn.disabled = true;
+                    protocolSelect.disabled = false;
                     wsUrlInput.disabled = false;
                     
                     if (isRecording) {
@@ -608,57 +898,58 @@
                 websocket.close();
                 websocket = null;
             }
+            updateConnectionStatus('Disconnected', false);
+            activeProtocol.textContent = 'None';
+            connectBtn.disabled = false;
+            disconnectBtn.disabled = true;
+            startBtn.disabled = true;
+            protocolSelect.disabled = false;
+            wsUrlInput.disabled = false;
+        }
+        
+        // Universal connect function
+        async function connect() {
+            if (currentProtocol === 'websocket') {
+                await connectWebSocket();
+            } else {
+                await connectWebRTC();
+            }
+        }
+        
+        // Universal disconnect function
+        function disconnect() {
+            if (currentProtocol === 'websocket') {
+                disconnectWebSocket();
+            } else {
+                disconnectWebRTC();
+            }
         }
         
         // Start recording
         async function startRecording() {
-            if (!websocket || websocket.readyState !== WebSocket.OPEN) {
-                addMessage('❌ WebSocket not connected', 'error');
-                return;
+            // Check connection based on protocol
+            if (currentProtocol === 'websocket') {
+                if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+                    addMessage('❌ WebSocket not connected', 'error');
+                    return;
+                }
+            } else if (currentProtocol === 'webrtc') {
+                if (!peerConnection || peerConnection.connectionState !== 'connected') {
+                    addMessage('❌ WebRTC not connected', 'error');
+                    return;
+                }
             }
             
             try {
-                addMessage('🎤 Requesting microphone access...', 'info');
-                audioStream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true
-                    }
-                });
-                
-                addMessage('✅ Microphone access granted', 'success');
-                
-                // Create MediaRecorder
-                const mimeType = MediaRecorder.isTypeSupported('audio/webm') 
-                    ? 'audio/webm' 
-                    : 'audio/ogg';
-                    
-                mediaRecorder = new MediaRecorder(audioStream, { 
-                    mimeType: mimeType,
-                    audioBitsPerSecond: 128000
-                });
-                
-                addMessage(`📊 Using codec: ${mimeType}`, 'info');
-                
-                mediaRecorder.ondataavailable = (event) => {
-                    if (event.data.size > 0 && websocket.readyState === WebSocket.OPEN) {
-                        websocket.send(event.data);
-                        chunksCount++;
-                        bytesCount += event.data.size;
-                        updateStats();
-                    }
-                };
-                
-                mediaRecorder.onstart = () => {
+                if (currentProtocol === 'webrtc') {
+                    // For WebRTC, audio is already streaming, just update UI
                     isRecording = true;
                     startTime = Date.now();
                     chunksCount = 0;
                     bytesCount = 0;
                     
-                    updateRecordingStatus('Recording...', true);
-                    addMessage('🔴 Recording started', 'success');
-                    websocket.send('start_recording');
+                    updateRecordingStatus('Streaming (WebRTC)...', true);
+                    addMessage('🔴 WebRTC audio streaming active', 'success');
                     
                     // Show transcript box and reset content
                     transcriptBox.style.display = 'block';
@@ -666,6 +957,7 @@
                     llmResponseBox.style.display = 'none';
                     llmResponseContent.textContent = '🤔 Thinking...';
                     audioStatus.textContent = '';
+                    latencyCard.style.display = 'none';
                     
                     // Reset audio playback
                     if (audioContext) {
@@ -678,40 +970,105 @@
                     
                     // Update duration every second
                     durationInterval = setInterval(updateStats, 1000);
-                };
-                
-                mediaRecorder.onstop = () => {
-                    isRecording = false;
-                    updateRecordingStatus('Idle', false);
-                    addMessage('⏹️ Recording stopped', 'info');
                     
-                    if (websocket && websocket.readyState === WebSocket.OPEN) {
-                        websocket.send('stop_recording');
-                    }
+                } else {
+                    // WebSocket mode - use MediaRecorder
+                    addMessage('🎤 Requesting microphone access...', 'info');
+                    audioStream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        }
+                    });
                     
-                    startBtn.disabled = false;
-                    stopBtn.disabled = true;
-                    disconnectBtn.disabled = false;
+                    addMessage('✅ Microphone access granted', 'success');
                     
-                    if (durationInterval) {
-                        clearInterval(durationInterval);
-                        durationInterval = null;
-                    }
+                    // Create MediaRecorder
+                    const mimeType = MediaRecorder.isTypeSupported('audio/webm') 
+                        ? 'audio/webm' 
+                        : 'audio/ogg';
+                        
+                    mediaRecorder = new MediaRecorder(audioStream, { 
+                        mimeType: mimeType,
+                        audioBitsPerSecond: 128000
+                    });
                     
-                    // Stop all tracks
-                    if (audioStream) {
-                        audioStream.getTracks().forEach(track => track.stop());
-                        audioStream = null;
-                    }
-                };
-                
-                mediaRecorder.onerror = (error) => {
-                    addMessage(`❌ MediaRecorder error: ${error.name}`, 'error');
-                    console.error('MediaRecorder error:', error);
-                };
-                
-                // Start recording with 250ms chunks
-                mediaRecorder.start(250);
+                    addMessage(`📊 Using codec: ${mimeType}`, 'info');
+                    
+                    mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0 && websocket.readyState === WebSocket.OPEN) {
+                            websocket.send(event.data);
+                            chunksCount++;
+                            bytesCount += event.data.size;
+                            updateStats();
+                        }
+                    };
+                    
+                    mediaRecorder.onstart = () => {
+                        isRecording = true;
+                        startTime = Date.now();
+                        chunksCount = 0;
+                        bytesCount = 0;
+                        
+                        updateRecordingStatus('Recording (WebSocket)...', true);
+                        addMessage('🔴 Recording started', 'success');
+                        websocket.send('start_recording');
+                        
+                        // Show transcript box and reset content
+                        transcriptBox.style.display = 'block';
+                        transcriptContent.textContent = 'Waiting for speech...';
+                        llmResponseBox.style.display = 'none';
+                        llmResponseContent.textContent = '🤔 Thinking...';
+                        audioStatus.textContent = '';
+                        latencyCard.style.display = 'none';
+                        
+                        // Reset audio playback
+                        if (audioContext) {
+                            nextPlayTime = audioContext.currentTime;
+                        }
+                        
+                        startBtn.disabled = true;
+                        stopBtn.disabled = false;
+                        disconnectBtn.disabled = true;
+                        
+                        // Update duration every second
+                        durationInterval = setInterval(updateStats, 1000);
+                    };
+                    
+                    mediaRecorder.onstop = () => {
+                        isRecording = false;
+                        updateRecordingStatus('Idle', false);
+                        addMessage('⏹️ Recording stopped', 'info');
+                        
+                        if (websocket && websocket.readyState === WebSocket.OPEN) {
+                            websocket.send('stop_recording');
+                        }
+                        
+                        startBtn.disabled = false;
+                        stopBtn.disabled = true;
+                        disconnectBtn.disabled = false;
+                        
+                        if (durationInterval) {
+                            clearInterval(durationInterval);
+                            durationInterval = null;
+                        }
+                        
+                        // Stop all tracks
+                        if (audioStream) {
+                            audioStream.getTracks().forEach(track => track.stop());
+                            audioStream = null;
+                        }
+                    };
+                    
+                    mediaRecorder.onerror = (error) => {
+                        addMessage(`❌ MediaRecorder error: ${error.name}`, 'error');
+                        console.error('MediaRecorder error:', error);
+                    };
+                    
+                    // Start recording with 250ms chunks
+                    mediaRecorder.start(250);
+                }
                 
             } catch (error) {
                 addMessage(`❌ Error starting recording: ${error.message}`, 'error');
@@ -722,8 +1079,25 @@
         
         // Stop recording
         function stopRecording() {
-            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                mediaRecorder.stop();
+            if (currentProtocol === 'webrtc') {
+                // For WebRTC, just update UI state
+                isRecording = false;
+                updateRecordingStatus('Idle', false);
+                addMessage('⏹️ WebRTC streaming paused', 'info');
+                
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                
+                if (durationInterval) {
+                    clearInterval(durationInterval);
+                    durationInterval = null;
+                }
+            } else {
+                // WebSocket - stop MediaRecorder
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                }
             }
         }
         
@@ -771,8 +1145,8 @@
         }
         
         // Event listeners
-        connectBtn.addEventListener('click', connectWebSocket);
-        disconnectBtn.addEventListener('click', disconnectWebSocket);
+        connectBtn.addEventListener('click', connect);
+        disconnectBtn.addEventListener('click', disconnect);
         startBtn.addEventListener('click', startRecording);
         stopBtn.addEventListener('click', stopRecording);
         testAudioBtn.addEventListener('click', testAudio);
